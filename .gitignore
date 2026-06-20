@@ -1,0 +1,61 @@
+# ── Python ─────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.venv
+dist/
+build/
+*.egg-info/
+
+# ── Secrets (NEVER commit these) ───
+.env.local
+.env.production
+*.pem
+*.key
+secrets/
+
+# ── Node / Next.js ──────────────────
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Docker ──────────────────────────
+*.tar
+
+# ── IDE ─────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Testing ─────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+coverage.xml
+
+# ── Model files (large) ─────────────
+*.onnx
+*.plan
+*.pt
+*.bin
+*.safetensors
+services/triton-server/models/*/1/
+
+# ── Trivy / Security scan output ────
+trivy-results/
+zap-reports/
+
+# ── Local k3d kubeconfig ─────────────
+kubeconfig.yaml

@@ -1,0 +1,72 @@
+syntax = "proto3";
+package ocr.quota.v1;
+
+// ── Quota check ───────────────────────────────────────────
+message QuotaCheckRequest {
+  string user_id    = 1;
+  string session_id = 2;
+  string tier       = 3;
+  int32  pages      = 4;  // number of pages about to be processed
+}
+
+message QuotaCheckResponse {
+  bool   allowed        = 1;
+  string denied_reason  = 2;  // which limit was hit
+  string limit_type     = 3;  // "session" | "daily" | "weekly" | "monthly"
+  int32  current_usage  = 4;
+  int32  limit_value    = 5;
+  int64  reset_at_unix  = 6;  // when this counter resets
+}
+
+// ── Quota increment (called after successful job) ─────────
+message QuotaIncrementRequest {
+  string user_id    = 1;
+  string session_id = 2;
+  string tier       = 3;
+  int32  pages      = 4;
+}
+
+message QuotaIncrementResponse {
+  bool success = 1;
+}
+
+// ── Quota usage query ─────────────────────────────────────
+message QuotaUsageRequest {
+  string user_id = 1;
+  string tier    = 2;
+}
+
+message QuotaUsageResponse {
+  int32 session_used    = 1;
+  int32 daily_used      = 2;
+  int32 weekly_used     = 3;
+  int32 monthly_used    = 4;
+  int32 session_limit   = 5;
+  int32 daily_limit     = 6;
+  int32 weekly_limit    = 7;
+  int32 monthly_limit   = 8;
+}
+
+// ── Tier config ───────────────────────────────────────────
+message TierConfig {
+  string tier                    = 1;
+  int32  pages_per_session       = 2;
+  int32  pages_per_day           = 3;
+  int32  pages_per_week          = 4;
+  int32  pages_per_month         = 5;
+  int32  max_file_size_mb        = 6;
+  int32  max_pages_per_pdf       = 7;
+  int32  concurrent_sessions     = 8;
+  int32  result_retention_hours  = 9;
+}
+
+message GetTierConfigRequest {
+  string tier = 1;
+}
+
+service QuotaService {
+  rpc CheckQuota      (QuotaCheckRequest)     returns (QuotaCheckResponse);
+  rpc IncrementQuota  (QuotaIncrementRequest) returns (QuotaIncrementResponse);
+  rpc GetUsage        (QuotaUsageRequest)     returns (QuotaUsageResponse);
+  rpc GetTierConfig   (GetTierConfigRequest)  returns (TierConfig);
+}

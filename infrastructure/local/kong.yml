@@ -1,0 +1,116 @@
+_format_version: "3.0"
+
+# ── Kong Declarative Config for Local Dev ────────────────────────────────────
+# Proxies all microservice routes through a single API gateway at :8080.
+# JWT auth is handled by services internally (not at Kong level in dev).
+
+services:
+  # ── Auth Service ────────────────────────────────────────────────────────────
+  - name: auth-service
+    url: http://auth-service:8001
+    routes:
+      - name: auth-route
+        paths: ["/api/v1/auth"]
+        strip_path: false
+    plugins:
+      - name: cors
+        config:
+          origins: ["*"]
+          methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+          headers: ["Authorization", "Content-Type"]
+          max_age: 3600
+
+  # ── Ingestion Service ───────────────────────────────────────────────────────
+  - name: ingestion-service
+    url: http://ingestion-service:8002
+    routes:
+      - name: ingestion-route
+        paths: ["/ingestion-service"]
+        strip_path: true
+    plugins:
+      - name: cors
+        config:
+          origins: ["*"]
+          methods: ["GET", "POST", "OPTIONS"]
+          headers: ["Authorization", "Content-Type"]
+          max_age: 3600
+      - name: rate-limiting
+        config:
+          minute: 30
+          hour: 500
+          policy: local
+          fault_tolerant: true
+
+  # ── Quota Service ───────────────────────────────────────────────────────────
+  - name: quota-service
+    url: http://quota-service:8003
+    routes:
+      - name: quota-route
+        paths: ["/quota-service"]
+        strip_path: true
+    plugins:
+      - name: cors
+        config:
+          origins: ["*"]
+          methods: ["GET", "POST", "OPTIONS"]
+          headers: ["Authorization", "Content-Type"]
+          max_age: 3600
+
+  # ── Result Service ──────────────────────────────────────────────────────────
+  - name: result-service
+    url: http://result-service:8004
+    routes:
+      - name: results-route
+        paths: ["/result-service"]
+        strip_path: true
+    plugins:
+      - name: cors
+        config:
+          origins: ["*"]
+          methods: ["GET", "OPTIONS"]
+          headers: ["Authorization", "Content-Type"]
+          max_age: 3600
+
+  # ── Notification Service (SSE) ──────────────────────────────────────────────
+  - name: notification-service
+    url: http://notification-service:8005
+    routes:
+      - name: notification-route
+        paths: ["/api/v1/jobs"]
+        strip_path: false
+    plugins:
+      - name: cors
+        config:
+          origins: ["*"]
+          methods: ["GET", "OPTIONS"]
+          headers: ["Authorization", "Content-Type", "Cache-Control"]
+          max_age: 3600
+
+  # ── Chat Service ────────────────────────────────────────────────────────────
+  - name: chat-service
+    url: http://chat-service:8006
+    routes:
+      - name: chat-route
+        paths: ["/chat-service"]
+        strip_path: true
+    plugins:
+      - name: cors
+        config:
+          origins: ["*"]
+          methods: ["GET", "POST", "OPTIONS"]
+          headers: ["Authorization", "Content-Type"]
+          max_age: 3600
+      - name: rate-limiting
+        config:
+          minute: 20
+          hour: 200
+          policy: local
+          fault_tolerant: true
+
+  # ── Health Aggregator ───────────────────────────────────────────────────────
+  - name: health-proxy
+    url: http://ingestion-service:8002
+    routes:
+      - name: health-route
+        paths: ["/health"]
+        strip_path: false

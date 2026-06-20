@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: OCR Platform Dashboards
+    orgId: 1
+    folder: "OCR Platform"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/provisioning/dashboards

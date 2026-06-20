@@ -1,0 +1,60 @@
+{
+  "realm": "ocr-platform",
+  "enabled": true,
+  "accessTokenLifespan": 86400,
+  "clients": [
+    {
+      "clientId": "ocr-api",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "change-me",
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*", "http://localhost:8080/*"],
+      "webOrigins": ["http://localhost:3000", "http://localhost:8080"]
+    },
+    {
+      "clientId": "ocr-web",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"]
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "user", "description": "Standard user role" },
+      { "name": "free", "description": "Free tier" },
+      { "name": "basic", "description": "Basic tier" },
+      { "name": "pro", "description": "Pro tier" },
+      { "name": "admin", "description": "Platform admin" }
+    ]
+  },
+  "users": [
+    {
+      "username": "devuser",
+      "email": "dev@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "devpassword", "temporary": false }
+      ],
+      "realmRoles": ["user", "pro"]
+    },
+    {
+      "username": "freeuser",
+      "email": "free@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Free",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "freepassword", "temporary": false }
+      ],
+      "realmRoles": ["user", "free"]
+    }
+  ]
+}

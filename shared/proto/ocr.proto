@@ -1,0 +1,51 @@
+syntax = "proto3";
+package ocr.job.v1;
+
+enum JobStatus {
+  JOB_STATUS_UNKNOWN    = 0;
+  JOB_STATUS_QUEUED     = 1;
+  JOB_STATUS_PROCESSING = 2;
+  JOB_STATUS_COMPLETED  = 3;
+  JOB_STATUS_FAILED     = 4;
+  JOB_STATUS_REJECTED   = 5;  // quota exceeded / validation error
+}
+
+message OcrJobEvent {
+  string job_id        = 1;
+  string user_id       = 2;
+  string session_id    = 3;
+  string file_key      = 4;  // S3/MinIO object key
+  string file_name     = 5;
+  string file_type     = 6;  // "image/jpeg" | "application/pdf"
+  int32  page_count    = 7;
+  repeated string languages = 8;  // hint: ["hi", "ta", "en", ...]
+  string tier          = 9;
+  int64  submitted_at  = 10;
+}
+
+message OcrJobResult {
+  string job_id          = 1;
+  string user_id         = 2;
+  JobStatus status       = 3;
+  repeated PageResult pages = 4;
+  string error_message   = 5;
+  int64  completed_at    = 6;
+  float  confidence      = 7;   // overall confidence score 0-1
+  string model_used      = 8;
+}
+
+message PageResult {
+  int32  page_number  = 1;
+  string text         = 2;
+  string layout_json  = 3;   // LayoutLM structured output
+  float  confidence   = 4;
+  string language     = 5;   // detected language code
+}
+
+// Kafka event wrapper
+message KafkaJobMessage {
+  string event_type = 1;   // "JOB_SUBMITTED" | "JOB_COMPLETED" | "JOB_FAILED"
+  OcrJobEvent job   = 2;
+  OcrJobResult result = 3;
+  int64 timestamp   = 4;
+}

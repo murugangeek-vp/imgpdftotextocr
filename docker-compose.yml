@@ -1,0 +1,579 @@
+# OCR Platform - Docker Compose (version field removed as obsolete in Compose v2+)
+
+# ============================================================
+# OCR Platform — Full Local Development Stack
+# Run: make dev  (or: docker compose up -d)
+# ============================================================
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  networks:
+    - ocr-net
+  env_file:
+    - .env.local
+
+# ── Logging defaults ─────────────────────────────────────────
+x-logging: &logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+
+  # ═══════════════════════════════════════════════════════════
+  # INFRASTRUCTURE
+  # ═══════════════════════════════════════════════════════════
+
+  mongodb:
+    image: mongo:7.0
+    <<: [*service-defaults, *logging]
+    container_name: ocr-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: ocrplatform
+    volumes:
+      - mongodb-data:/data/db
+      - ./infrastructure/local/mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    <<: [*service-defaults, *logging]
+    container_name: ocr-redis
+    command: redis-server --requirepass redispassword --save 60 1 --loglevel warning
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redispassword", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    <<: [*service-defaults, *logging]
+    container_name: ocr-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    <<: [*service-defaults, *logging]
+    container_name: ocr-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    ports:
+      - "29092:29092"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: ocr-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - ocr-net
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ocr.jobs.pending --partitions 10 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ocr.jobs.completed --partitions 5 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ocr.jobs.failed --partitions 5 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic quota.alerts --partitions 3 --replication-factor 1
+      echo 'Kafka topics created.'
+      "
+    restart: "no"
+
+  minio:
+    image: minio/minio:latest
+    <<: [*service-defaults, *logging]
+    container_name: ocr-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: ocr-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - ocr-net
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      mc alias set local http://minio:9000 minioadmin minioadmin
+      mc mb --ignore-existing local/ocr-uploads
+      mc mb --ignore-existing local/ocr-results
+      mc anonymous set none local/ocr-uploads
+      mc anonymous set none local/ocr-results
+      mc ilm rule add --expire-days 1 local/ocr-uploads
+      echo 'MinIO buckets initialized.'
+      "
+    restart: "no"
+
+  clamav:
+    image: clamav/clamav:stable
+    <<: [*service-defaults, *logging]
+    container_name: ocr-clamav
+    volumes:
+      - clamav-data:/var/lib/clamav
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --version || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ═══════════════════════════════════════════════════════════
+  # AUTHENTICATION
+  # ═══════════════════════════════════════════════════════════
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    <<: [*service-defaults, *logging]
+    container_name: ocr-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_DB: dev-mem
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"  # Prevent OOM kills in Docker
+    volumes:
+      - ./infrastructure/local/keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ═══════════════════════════════════════════════════════════
+  # API GATEWAY (Kong)
+  # ═══════════════════════════════════════════════════════════
+
+  kong:
+    image: kong:3.5
+    <<: [*service-defaults, *logging]
+    container_name: ocr-kong
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+    volumes:
+      - ./infrastructure/local/kong.yml:/etc/kong/kong.yml:ro
+    ports:
+      - "8080:8000"   # Proxy (public API)
+      - "8081:8001"   # Admin API
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ═══════════════════════════════════════════════════════════
+  # OCR PLATFORM MICROSERVICES
+  # ═══════════════════════════════════════════════════════════
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-auth-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8001:8001"   # REST
+      - "50051:50051" # gRPC
+    environment:
+      SERVICE_NAME: auth-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  quota-service:
+    build:
+      context: ./services/quota-service
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-quota-service
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "8003:8003"   # REST
+      - "50053:50053" # gRPC
+    environment:
+      SERVICE_NAME: quota-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ingestion-service:
+    build:
+      context: ./services/ingestion-service
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-ingestion-service
+    depends_on:
+      minio:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      quota-service:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    ports:
+      - "8002:8002"   # REST
+      - "50052:50052" # gRPC
+    environment:
+      SERVICE_NAME: ingestion-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  result-service:
+    build:
+      context: ./services/result-service
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-result-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8004:8004"   # REST
+      - "50054:50054" # gRPC
+    environment:
+      SERVICE_NAME: result-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-notification-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8005:8005"
+    environment:
+      SERVICE_NAME: notification-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chat-service:
+    build:
+      context: ./services/chat-service
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-chat-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8006:8006"   # REST
+      - "50055:50055" # gRPC
+    environment:
+      SERVICE_NAME: chat-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ocr-worker:
+    build:
+      context: ./services/ocr-worker
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      triton:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: ocr-worker
+      WORKER_CONCURRENCY: "4"
+    deploy:
+      replicas: 2  # Scale with: docker compose up --scale ocr-worker=4
+
+  triton:
+    build:
+      context: ./services/triton-server
+      dockerfile: Dockerfile.cpu   # CPU mock for local dev
+    <<: [*service-defaults, *logging]
+    container_name: ocr-triton
+    ports:
+      - "9700:8000"  # HTTP inference  (host:9700 → container:8000)
+      - "9701:8001"  # gRPC mock       (host:9701 → container:8001)
+      - "9702:8002"  # Metrics         (host:9702 → container:8002)
+    volumes:
+      - ./services/triton-server/models:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ═══════════════════════════════════════════════════════════
+  # LLM FALLBACK (Ollama)
+  # ═══════════════════════════════════════════════════════════
+
+  ollama:
+    image: ollama/ollama:latest
+    <<: [*service-defaults, *logging]
+    container_name: ocr-ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11435:11434"  # host 11435 avoids conflict with local Ollama on 11434
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: ocr-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - ocr-net
+    entrypoint: ["/bin/sh", "-c"]
+    command: "ollama pull llama3.2:1b && echo 'Model ready.'"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    restart: "no"
+
+  # ═══════════════════════════════════════════════════════════
+  # FRONTEND
+  # ═══════════════════════════════════════════════════════════
+
+  web-app:
+    build:
+      context: ./services/web-app
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-web-app
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXT_PUBLIC_WS_URL: ws://localhost:8005
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_change-me
+      NEXT_PUBLIC_RAZORPAY_KEY: rzp_test_change-me
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  admin-service:
+    build:
+      context: ./services/admin-service
+      dockerfile: Dockerfile
+    <<: [*service-defaults, *logging]
+    container_name: ocr-admin
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    environment:
+      SERVICE_NAME: admin-service
+
+  # ═══════════════════════════════════════════════════════════
+  # OBSERVABILITY
+  # ═══════════════════════════════════════════════════════════
+
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: ocr-langfuse-db
+    <<: *service-defaults
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse:
+    image: langfuse/langfuse:2
+    <<: [*service-defaults, *logging]
+    container_name: ocr-langfuse
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: change-me-32-chars-min
+      SALT: change-me-32-chars-min
+      NEXTAUTH_URL: http://localhost:3002
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "3002:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/api/public/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    <<: [*service-defaults, *logging]
+    container_name: ocr-prometheus
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    <<: [*service-defaults, *logging]
+    container_name: ocr-grafana
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    <<: [*service-defaults, *logging]
+    container_name: ocr-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+
+# ═════════════════════════════════════════════════════════════
+# NETWORKS & VOLUMES
+# ═════════════════════════════════════════════════════════════
+
+networks:
+  ocr-net:
+    driver: bridge
+    name: ocr-platform-net
+
+volumes:
+  mongodb-data:
+  redis-data:
+  kafka-data:
+  zookeeper-data:
+  zookeeper-logs:
+  minio-data:
+  clamav-data:
+  ollama-models:
+  langfuse-db-data:
+  prometheus-data:
+  grafana-data:
