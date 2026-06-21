@@ -1,0 +1,40 @@
+# ServiceAccount + RBAC for OCR platform services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ocr-service-sa
+  namespace: ocr-platform
+  labels:
+    app.kubernetes.io/part-of: ocr-platform
+
+---
+# Role: read-only access to ConfigMaps and Secrets in ocr-platform namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ocr-config-reader
+  namespace: ocr-platform
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["app-config"]
+    verbs: ["get", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["app-secrets"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ocr-config-reader-binding
+  namespace: ocr-platform
+subjects:
+  - kind: ServiceAccount
+    name: ocr-service-sa
+    namespace: ocr-platform
+roleRef:
+  kind: Role
+  name: ocr-config-reader
+  apiGroup: rbac.authorization.k8s.io

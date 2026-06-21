@@ -1,0 +1,21 @@
+# KEDA ScaledObject — auto-scales ocr-worker based on Kafka consumer lag
+# Scales from 0 → 10 pods based on pending messages in ocr.jobs.pending
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: ocr-worker-scaler
+  namespace: ocr-platform
+spec:
+  scaleTargetRef:
+    name: ocr-worker
+  minReplicaCount: 0       # Scale to zero when idle (cost saving)
+  maxReplicaCount: 10      # Max GPU nodes per implementation plan
+  cooldownPeriod: 300      # 5 min before scaling down
+  pollingInterval: 15      # Check Kafka lag every 15s
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "kafka-headless.ocr-platform.svc:9092"
+        consumerGroup: "ocr-workers"
+        topic: "ocr.jobs.pending"
+        lagThreshold: "5"  # Scale up when lag > 5 messages per partition

@@ -1,0 +1,90 @@
+# Kong Ingress routing — public traffic to web-app and API gateway
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ocr-platform-ingress
+  namespace: ocr-platform
+  annotations:
+    kubernetes.io/ingress.class: kong
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    konghq.com/strip-path: "false"
+    konghq.com/protocols: "https"
+    konghq.com/https-redirect-status-code: "308"
+spec:
+  tls:
+    - hosts:
+        - ocrplatform.com
+        - api.ocrplatform.com
+        - admin.ocrplatform.com
+      secretName: ocr-platform-tls
+  rules:
+    # Public web app
+    - host: ocrplatform.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-app
+                port:
+                  number: 3000
+
+    # API gateway routes
+    - host: api.ocrplatform.com
+      http:
+        paths:
+          - path: /auth-service
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8000
+          - path: /ingestion-service
+            pathType: Prefix
+            backend:
+              service:
+                name: ingestion-service
+                port:
+                  number: 8000
+          - path: /quota-service
+            pathType: Prefix
+            backend:
+              service:
+                name: quota-service
+                port:
+                  number: 8000
+          - path: /result-service
+            pathType: Prefix
+            backend:
+              service:
+                name: result-service
+                port:
+                  number: 8000
+          - path: /chat-service
+            pathType: Prefix
+            backend:
+              service:
+                name: chat-service
+                port:
+                  number: 8000
+          - path: /api/v1/jobs
+            pathType: Prefix
+            backend:
+              service:
+                name: notification-service
+                port:
+                  number: 8005
+
+    # Internal admin dashboard
+    - host: admin.ocrplatform.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-service
+                port:
+                  number: 8501

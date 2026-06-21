@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ocr-platform
+  labels:
+    app.kubernetes.io/part-of: ocr-platform
+    pod-security.kubernetes.io/enforce: restricted

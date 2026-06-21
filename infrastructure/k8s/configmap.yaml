@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ocr-platform
+  labels:
+    app.kubernetes.io/part-of: ocr-platform
+data:
+  # ── App ──────────────────────────────────────────
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+
+  # ── Kong ─────────────────────────────────────────
+  KONG_ADMIN_URL: "http://kong-admin.ocr-platform.svc:8001"
+  KONG_PROXY_URL: "http://kong-proxy.ocr-platform.svc:8080"
+
+  # ── Auth ─────────────────────────────────────────
+  KEYCLOAK_URL: "http://keycloak.ocr-platform.svc:8080"
+  KEYCLOAK_REALM: "ocr-platform"
+  KEYCLOAK_CLIENT_ID: "ocr-api"
+
+  # ── Database ─────────────────────────────────────
+  MONGODB_DB: "ocrplatform"
+
+  # ── Object Storage ───────────────────────────────
+  STORAGE_PROVIDER: "s3"
+  MINIO_BUCKET_UPLOADS: "ocr-uploads"
+  MINIO_BUCKET_RESULTS: "ocr-results"
+  MINIO_USE_SSL: "true"
+  PRESIGNED_URL_EXPIRY_SECONDS: "900"
+
+  # ── Kafka ────────────────────────────────────────
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-headless.ocr-platform.svc:9092"
+  KAFKA_TOPIC_OCR_PENDING: "ocr.jobs.pending"
+  KAFKA_TOPIC_OCR_COMPLETED: "ocr.jobs.completed"
+  KAFKA_TOPIC_OCR_FAILED: "ocr.jobs.failed"
+  KAFKA_TOPIC_QUOTA_ALERTS: "quota.alerts"
+  KAFKA_CONSUMER_GROUP: "ocr-workers"
+
+  # ── Triton ───────────────────────────────────────
+  TRITON_GRPC_URL: "triton.ocr-platform.svc:8001"
+  TRITON_HTTP_URL: "http://triton.ocr-platform.svc:8000"
+  TRITON_MODEL_DETECTION: "ocr_detection"
+  TRITON_MODEL_RECOGNITION: "ocr_recognition"
+  TRITON_MODEL_ENSEMBLE: "ocr_ensemble"
+
+  # ── LLM Router ───────────────────────────────────
+  LLM_ROUTING_STRATEGY: "auto"
+  LLM_FREE_TIER_MODEL: "ollama"
+  LLM_PAID_TIER_MODEL: "openai"
+  OPENAI_MODEL: "gpt-4o"
+  OPENAI_MAX_TOKENS: "2000"
+  OLLAMA_BASE_URL: "http://ollama.ocr-platform.svc:11434"
+  OLLAMA_MODEL: "llama3.2:1b"
+
+  # ── Langfuse ─────────────────────────────────────
+  LANGFUSE_HOST: "http://langfuse.ocr-platform.svc:3000"
+
+  # ── ClamAV ───────────────────────────────────────
+  CLAMAV_HOST: "clamav.ocr-platform.svc"
+  CLAMAV_PORT: "3310"
+
+  # ── Service Ports ────────────────────────────────
+  AUTH_SERVICE_GRPC_PORT: "50051"
+  INGESTION_SERVICE_GRPC_PORT: "50052"
+  QUOTA_SERVICE_GRPC_PORT: "50053"
+  RESULT_SERVICE_GRPC_PORT: "50054"
+  NOTIFICATION_SERVICE_PORT: "8005"
+  CHAT_SERVICE_GRPC_PORT: "50055"
+  TIER_CONFIG_CACHE_TTL_SECONDS: "60"
